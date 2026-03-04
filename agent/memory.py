@@ -9,7 +9,6 @@ class AgentMemory:
         self.init_db()
 
     def _connect(self):
-        # check_same_thread=False ist hilfreich bei Streamlit/Reruns
         con = sqlite3.connect(self.db_path, check_same_thread=False)
         con.execute("PRAGMA journal_mode=WAL;")
         con.execute("PRAGMA synchronous=NORMAL;")
@@ -36,7 +35,7 @@ class AgentMemory:
             """)
             con.commit()
 
-    def add_run(self, goal, final_answer):
+    def add_run(self, goal, final_answer=""):
         with self._connect() as con:
             cur = con.execute(
                 "INSERT INTO runs(ts, goal, final_answer) VALUES(?,?,?)",
@@ -44,6 +43,14 @@ class AgentMemory:
             )
             con.commit()
             return cur.lastrowid
+
+    def update_run_final(self, run_id, final_answer: str):
+        with self._connect() as con:
+            con.execute(
+                "UPDATE runs SET final_answer=? WHERE id=?",
+                (final_answer, run_id)
+            )
+            con.commit()
 
     def add_event(self, run_id, kind, data):
         with self._connect() as con:
@@ -53,14 +60,22 @@ class AgentMemory:
             )
             con.commit()
 
-    def get_runs(self, limit=20):
+    def get_runs(self, limit=50):
         with self._connect() as con:
             return con.execute(
-                "SELECT id, ts, goal FROM runs ORDER BY id DESC LIMIT ?",
+                "SELECT id, ts, goal, final_answer FROM runs ORDER BY id DESC LIMIT ?",
                 (limit,)
             ).fetchall()
 
-    def get_events(self, run_id, limit=200):
+    def get_run(self, run_id):
+        with self._connect() as con:
+            row = con.execute(
+                "SELECT id, ts, goal, final_answer FROM runs WHERE id=?",
+                (run_id,)
+            ).fetchone()
+        return row
+
+    def get_events(self, run_id, limit=300):
         with self._connect() as con:
             rows = con.execute(
                 "SELECT ts, kind, data FROM events WHERE run_id=? ORDER BY id ASC LIMIT ?",
