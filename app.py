@@ -33,7 +33,7 @@ if not st.session_state.auth:
     st.stop()
 
 # ------------------------
-# Check API key
+# Key check
 # ------------------------
 if not os.getenv("OPENROUTER_API_KEY"):
     st.error("OPENROUTER_API_KEY fehlt in Streamlit Secrets")
@@ -45,19 +45,19 @@ if not os.getenv("OPENROUTER_API_KEY"):
 config = AgentConfig()
 memory = AgentMemory(config.memory_db_path)
 
-st.title("🧠 Cloud Manus Agent")
-st.caption("PLAN → RESEARCH → EXECUTE → FINAL (mit sichtbarer Aktivität)")
-
 with st.sidebar:
     st.header("⚙️ Einstellungen")
-
     model = st.text_input("Model", value=os.getenv("OPENAI_MODEL", config.model))
-    max_loops = st.slider("Max loops", 1, 20, int(config.max_loops))
-    max_tool_calls = st.slider("Max tool calls", 1, 20, int(getattr(config, "max_tool_calls", 4)))
+    max_loops = st.slider("Max loops", 1, 30, int(config.max_loops))
+    max_tool_calls = st.slider("Max tool calls", 1, 30, int(config.max_tool_calls))
+    search_results = st.slider("Search results", 3, 12, int(config.search_results))
+    pages_to_read = st.slider("Pages to read", 1, 6, int(config.pages_to_read))
 
     config.model = model
     config.max_loops = int(max_loops)
     config.max_tool_calls = int(max_tool_calls)
+    config.search_results = int(search_results)
+    config.pages_to_read = int(pages_to_read)
 
     st.divider()
     if st.button("Logout"):
@@ -66,7 +66,10 @@ with st.sidebar:
 
 agent = ManusAgent(config, memory=memory)
 
-left, right = st.columns([0.40, 0.60], gap="large")
+st.title("🧠 Cloud Manus Agent")
+st.caption("Research v2 • Chat + Aktivität + Quellen + Report")
+
+left, right = st.columns([0.38, 0.62], gap="large")
 
 # ------------------------
 # LEFT: Runs + Activity
@@ -74,19 +77,27 @@ left, right = st.columns([0.40, 0.60], gap="large")
 with left:
     st.subheader("📜 Runs")
 
-    runs = memory.get_runs(limit=50)
+    runs = memory.get_runs(limit=60)
     run_ids = [r[0] for r in runs] if runs else []
 
-    # Default selected run
-    if "selected_run" not in st.session_state and run_ids:
-        st.session_state.selected_run = run_ids[0]
+    if "selected_run" not in st.session_state:
+        st.session_state.selected_run = run_ids[0] if run_ids else None
 
-    selected_run = st.selectbox(
-        "Run auswählen",
-        options=run_ids,
-        index=run_ids.index(st.session_state.selected_run) if run_ids and st.session_state.selected_run in run_ids else 0,
-        format_func=lambda rid: f"Run #{rid}"
-    ) if run_ids else None
+    col1, col2 = st.columns([0.7, 0.3])
+    with col1:
+        selected_run = st.selectbox(
+            "Run auswählen",
+            options=run_ids,
+            index=run_ids.index(st.session_state.selected_run) if st.session_state.selected_run in run_ids else 0,
+            format_func=lambda rid: f"Run #{rid}",
+            disabled=(len(run_ids) == 0),
+        ) if run_ids else None
+
+    with col2:
+        if st.button("➕ Neu"):
+            new_id = memory.create_run("New chat")
+            st.session_state.selected_run = new_id
+            st.rerun()
 
     if selected_run:
         st.session_state.selected_run = selected_run
@@ -94,8 +105,8 @@ with left:
     st.divider()
     st.subheader("🔎 Aktivität")
 
-    if selected_run:
-        events = memory.get_events(selected_run, limit=300)
+    if st.session_state.selected_run:
+        events = memory.get_events(st.session_state.selected_run, limit=500)
         for ts, kind, data in events[-140:]:
             t = time.strftime("%H:%M:%S", time.localtime(ts))
             if kind == "plan":
@@ -113,59 +124,60 @@ with left:
             else:
                 st.write(f"**{t}** {kind}")
     else:
-        st.caption("Noch keine Runs vorhanden.")
+        st.info("Erstelle einen neuen Run (➕ Neu).")
 
 # ------------------------
-# RIGHT: Task + Output
+# RIGHT: Chat
 # ------------------------
 with right:
-    st.subheader("Aufgabe")
-    goal = st.text_area("Was soll der Agent tun?", height=140)
+    st.subheader("💬 Chat")
 
-    colA, colB = st.columns([0.25, 0.75])
-    with colA:
-        start = st.button("Start Agent")
+    run_id = st.session_state.selected_run
+    if not run_id:
+        st.info("Bitte links einen Run auswählen oder auf ➕ Neu klicken.")
+        st.stop()
 
-    if start:
-        if not goal.strip():
-            st.warning("Bitte Aufgabe eingeben.")
-            st.stop()
+    # render chat history
+    raw_msgs = memory.get_messages(run_id, limit=300)
+    chat_history = []
+    for ts, role, content in raw_msgs:
+        chat_history.append({"role": role, "content": content})
 
-        run_id = memory.add_run(goal, "")
-        st.session_state.selected_run = run_id
+    for m in chat_history:
+        with st.chat_message("user" if m["role"] == "user" else "assistant"):
+            st.markdown(m["content"])
 
-        status = st.status("🧠 Agent arbeitet...", expanded=True)
-        status.write("PLAN → RESEARCH → EXECUTE → FINAL")
+    # chat input
+    user_text = st.chat_input("Schreib eine Nachricht… (du kannst jederzeit nachfragen)")
+    if user_text:
+        # save user message
+        memory.add_message(run_id, "user", user_text)
+
+        # show immediately
+        with st.chat_message("user"):
+            st.markdown(user_text)
+
+        status = st.status("🧠 Agent arbeitet…", expanded=True)
+        status.write("PLAN → SEARCH → READ → NOTES → REPORT")
 
         try:
-            result = agent.run(goal, run_id=run_id)
-            final_text = result.get("result", "") or ""
-            memory.update_run_final(run_id, final_text)
+            # agent needs history INCLUDING new message (re-read from DB)
+            raw_msgs2 = memory.get_messages(run_id, limit=300)
+            hist2 = [{"role": r, "content": c} for _, r, c in raw_msgs2]
+
+            assistant_text = agent.run_chat(run_id=run_id, user_message=user_text, chat_history=hist2)
+
+            # save assistant message
+            memory.add_message(run_id, "assistant", assistant_text)
+
+            # also store run final_answer as last assistant message for convenience
+            memory.update_run_final(run_id, assistant_text)
+
             status.update(label="✅ Fertig", state="complete", expanded=False)
+
         except Exception as e:
             status.update(label="❌ Fehler", state="error", expanded=True)
             st.error(f"Agent Fehler: {e}")
             st.stop()
 
         st.rerun()
-
-    # --- Always show selected run output (Manus-like) ---
-    st.divider()
-    st.subheader("Result (ausgewählter Run)")
-
-    if "selected_run" in st.session_state and st.session_state.selected_run:
-        row = memory.get_run(st.session_state.selected_run)
-        if row:
-            _, ts, saved_goal, final_answer = row
-            st.caption(f"Run #{st.session_state.selected_run} • {time.strftime('%d.%m.%Y %H:%M:%S', time.localtime(ts))}")
-            with st.expander("Aufgabe (gespeichert)", expanded=False):
-                st.write(saved_goal)
-
-            if final_answer and final_answer.strip():
-                st.write(final_answer)
-            else:
-                st.info("Noch kein Ergebnis gespeichert (oder Modell hat leer geantwortet).")
-        else:
-            st.info("Run nicht gefunden.")
-    else:
-        st.info("Starte einen Run oder wähle links einen aus.")
