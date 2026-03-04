@@ -15,6 +15,9 @@ else:
 
 import streamlit as st
 
+st.write("OPENAI_API_KEY vorhanden:", bool(os.getenv("OPENAI_API_KEY")))
+st.write("OPENAI_API_KEY prefix:", (os.getenv("OPENAI_API_KEY") or "")[:3])
+
 from agent.config import AgentConfig
 from agent.orchestrator import ManusAgent
 from agent.memory import AgentMemory
@@ -82,5 +85,6 @@ with right:
         st.subheader("Result")
 
         st.write(result["result"])
+
 
 
