@@ -33,8 +33,25 @@ def web_search(query: str, max_results: int = 5):
             })
     return {"query": query, "results": results}
 
+def read_webpage(url):
+    import requests
+    from bs4 import BeautifulSoup
+
+    r = requests.get(url, timeout=20)
+
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    text = soup.get_text(separator="\n")
+
+    return {
+        "url": url,
+        "text": text[:20000]
+    }
+
 TOOLS = {
     "write_file": write_file,
     "http_get": http_get,
     "web_search": web_search,
+    "read_webpage": read_webpage,
 }
+
