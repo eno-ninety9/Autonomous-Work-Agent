@@ -1,20 +1,19 @@
 import os
 import sys
-import streamlit as st
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.abspath(os.path.dirname(__file__))
+
+# Entferne falls aus Versehen die app.py-Datei als Pfad drin steht
+sys.path = [p for p in sys.path if p != os.path.join(ROOT, "app.py")]
+
+# Stelle sicher, dass der Ordner (nicht die Datei) an erster Stelle steht
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
+else:
+    sys.path.remove(ROOT)
+    sys.path.insert(0, ROOT)
 
-st.write("ROOT:", ROOT)
-st.write("sys.path[0:5]:", sys.path[:5])
-st.write("Root files:", os.listdir(ROOT))
-st.write("Agent dir exists?:", os.path.isdir(os.path.join(ROOT, "agent")))
-if os.path.isdir(os.path.join(ROOT, "agent")):
-    st.write("Agent dir files:", os.listdir(os.path.join(ROOT, "agent")))
-
-# STOP here so we can see output before import crash
-st.stop()
+import streamlit as st
 
 from agent.config import AgentConfig
 from agent.orchestrator import ManusAgent
@@ -83,4 +82,5 @@ with right:
         st.subheader("Result")
 
         st.write(result["result"])
+
 
