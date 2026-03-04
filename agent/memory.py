@@ -59,7 +59,7 @@ class AgentMemory:
             con.execute("UPDATE runs SET final_answer=? WHERE id=?", (final_answer, run_id))
             con.commit()
 
-    def get_runs(self, limit=50):
+    def get_runs(self, limit=80):
         with self._connect() as con:
             return con.execute(
                 "SELECT id, ts, title, final_answer FROM runs ORDER BY id DESC LIMIT ?",
@@ -82,7 +82,7 @@ class AgentMemory:
             )
             con.commit()
 
-    def get_messages(self, run_id: int, limit=200):
+    def get_messages(self, run_id: int, limit=400):
         with self._connect() as con:
             return con.execute(
                 "SELECT ts, role, content FROM messages WHERE run_id=? ORDER BY id ASC LIMIT ?",
@@ -98,7 +98,7 @@ class AgentMemory:
             )
             con.commit()
 
-    def get_events(self, run_id: int, limit=400):
+    def get_events(self, run_id: int, limit=800):
         with self._connect() as con:
             rows = con.execute(
                 "SELECT ts, kind, data FROM events WHERE run_id=? ORDER BY id ASC LIMIT ?",
