@@ -1,27 +1,46 @@
 import os
-import requests
+import json
+from openai import OpenAI
 
-def write_file(path, content):
+from .prompts import SYSTEM_PROMPT, PLANNER_PROMPT
 
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+class ManusAgent:
+    def __init__(self, config):
+        self.config = config
+        # Wichtig: API-Key über Env/Secrets
+        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    with open(path,"w",encoding="utf-8") as f:
-        f.write(content)
+    def _safe_json(self, s: str):
+        try:
+            return json.loads(s)
+        except Exception:
+            a = s.find("{")
+            b = s.rfind("}")
+            if a != -1 and b != -1 and b > a:
+                return json.loads(s[a:b+1])
+            # Fallback
+            return {"plan": [{"step": 1, "title": "Do task", "details": "Could not parse plan JSON"}]}
 
-    return {"saved":path}
+    def create_plan(self, goal: str):
+        resp = self.client.responses.create(
+            model=self.config.model,
+            input=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": PLANNER_PROMPT},
+                {"role": "user", "content": goal},
+            ],
+        )
+        return self._safe_json(resp.output_text)
 
+    def run(self, goal: str):
+        plan = self.create_plan(goal)
 
-def http_get(url):
+        resp = self.client.responses.create(
+            model=self.config.model,
+            input=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": goal},
+            ],
+        )
 
-    r = requests.get(url,timeout=20)
-
-    return {
-        "status":r.status_code,
-        "text":r.text[:20000]
-    }
-
-
-TOOLS = {
-    "write_file":write_file,
-    "http_get":http_get
-}
+        return {"plan": plan, "result": resp.output_text}
