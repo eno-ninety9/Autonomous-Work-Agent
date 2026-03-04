@@ -34,10 +34,10 @@ class ManusAgent:
             raise ValueError(f"Konnte JSON nicht parsen: {s[:200]}")
 
     def _try_json(self, s: str):
-    try:
-        return self._safe_json(s)
-    except Exception:
-        return None
+        try:
+            return self._safe_json(s)
+        except Exception:
+            return None
 
     def create_plan(self, goal: str):
         resp = self.client.chat.completions.create(
@@ -150,4 +150,5 @@ class ManusAgent:
             "sources": sources,
             "assumptions": ["max_loops erreicht"],
         }
+
 
