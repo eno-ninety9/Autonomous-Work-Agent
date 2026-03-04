@@ -24,7 +24,6 @@ if "auth" not in st.session_state:
 if not st.session_state.auth:
     st.title("🔐 Login")
     pw = st.text_input("Passwort", type="password")
-
     if st.button("Login"):
         if APP_PASSWORD and pw == APP_PASSWORD:
             st.session_state.auth = True
@@ -75,21 +74,29 @@ left, right = st.columns([0.40, 0.60], gap="large")
 with left:
     st.subheader("📜 Runs")
 
-    runs = memory.get_runs(limit=30)
+    runs = memory.get_runs(limit=50)
     run_ids = [r[0] for r in runs] if runs else []
 
-    selected_run = None
-    if run_ids:
-        selected_run = st.selectbox("Run auswählen", run_ids, format_func=lambda rid: f"Run #{rid}")
-    else:
-        st.info("Noch keine Runs.")
+    # Default selected run
+    if "selected_run" not in st.session_state and run_ids:
+        st.session_state.selected_run = run_ids[0]
+
+    selected_run = st.selectbox(
+        "Run auswählen",
+        options=run_ids,
+        index=run_ids.index(st.session_state.selected_run) if run_ids and st.session_state.selected_run in run_ids else 0,
+        format_func=lambda rid: f"Run #{rid}"
+    ) if run_ids else None
+
+    if selected_run:
+        st.session_state.selected_run = selected_run
 
     st.divider()
     st.subheader("🔎 Aktivität")
 
     if selected_run:
         events = memory.get_events(selected_run, limit=300)
-        for ts, kind, data in events[-120:]:
+        for ts, kind, data in events[-140:]:
             t = time.strftime("%H:%M:%S", time.localtime(ts))
             if kind == "plan":
                 st.write(f"**{t}** 🧩 Plan erstellt")
@@ -106,7 +113,7 @@ with left:
             else:
                 st.write(f"**{t}** {kind}")
     else:
-        st.caption("Wähle einen Run aus, um die Timeline zu sehen.")
+        st.caption("Noch keine Runs vorhanden.")
 
 # ------------------------
 # RIGHT: Task + Output
@@ -115,41 +122,50 @@ with right:
     st.subheader("Aufgabe")
     goal = st.text_area("Was soll der Agent tun?", height=140)
 
-    start = st.button("Start Agent")
+    colA, colB = st.columns([0.25, 0.75])
+    with colA:
+        start = st.button("Start Agent")
+
     if start:
         if not goal.strip():
             st.warning("Bitte Aufgabe eingeben.")
             st.stop()
 
         run_id = memory.add_run(goal, "")
+        st.session_state.selected_run = run_id
+
         status = st.status("🧠 Agent arbeitet...", expanded=True)
         status.write("PLAN → RESEARCH → EXECUTE → FINAL")
 
         try:
             result = agent.run(goal, run_id=run_id)
+            final_text = result.get("result", "") or ""
+            memory.update_run_final(run_id, final_text)
             status.update(label="✅ Fertig", state="complete", expanded=False)
         except Exception as e:
             status.update(label="❌ Fehler", state="error", expanded=True)
             st.error(f"Agent Fehler: {e}")
             st.stop()
 
-        st.subheader("Plan")
-        st.json(result.get("plan", {}))
-
-        st.subheader("Result")
-        if result.get("result"):
-            st.write(result["result"])
-        else:
-            st.warning("Kein Ergebnistext zurückgegeben.")
-
-        if result.get("sources"):
-            with st.expander("Quellen"):
-                for s in result["sources"]:
-                    st.write(f"- {s.get('title','Quelle')}: {s.get('url')}")
-
-        if result.get("assumptions"):
-            with st.expander("Annahmen"):
-                for a in result["assumptions"]:
-                    st.write(f"- {a}")
-
         st.rerun()
+
+    # --- Always show selected run output (Manus-like) ---
+    st.divider()
+    st.subheader("Result (ausgewählter Run)")
+
+    if "selected_run" in st.session_state and st.session_state.selected_run:
+        row = memory.get_run(st.session_state.selected_run)
+        if row:
+            _, ts, saved_goal, final_answer = row
+            st.caption(f"Run #{st.session_state.selected_run} • {time.strftime('%d.%m.%Y %H:%M:%S', time.localtime(ts))}")
+            with st.expander("Aufgabe (gespeichert)", expanded=False):
+                st.write(saved_goal)
+
+            if final_answer and final_answer.strip():
+                st.write(final_answer)
+            else:
+                st.info("Noch kein Ergebnis gespeichert (oder Modell hat leer geantwortet).")
+        else:
+            st.info("Run nicht gefunden.")
+    else:
+        st.info("Starte einen Run oder wähle links einen aus.")
