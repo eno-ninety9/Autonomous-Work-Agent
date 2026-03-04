@@ -51,7 +51,7 @@ if not st.session_state.auth:
 
 config = AgentConfig()
 
-agent = ManusAgent(config)
+agent = ManusAgent(config, memory=memory)
 
 memory = AgentMemory(config.memory_db_path)
 
@@ -85,6 +85,7 @@ with right:
         st.subheader("Result")
 
         st.write(result["result"])
+
 
 
 
