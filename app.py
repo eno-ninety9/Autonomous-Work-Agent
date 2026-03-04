@@ -186,13 +186,14 @@ with right:
         status.write("PLAN → RESEARCH → EXECUTE")
 
         try:
-
             result = agent.run(goal, run_id=run_id)
-
+            status.update(label="✅ Fertig", state="complete", expanded=False)
         except Exception as e:
-
+            status.update(label="❌ Fehler", state="error", expanded=True)
             st.error(f"Agent Fehler: {e}")
             st.stop()
+
+
 
         status.update(
             label="✅ Fertig",
@@ -226,3 +227,4 @@ with right:
                     st.write(f"- {a}")
 
         st.rerun()
+
