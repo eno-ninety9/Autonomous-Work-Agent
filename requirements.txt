@@ -3,4 +3,6 @@ openai>=1.40.0
 python-dotenv>=1.0.1
 pydantic>=2.7.0
 rich>=13.7.0
+beautifulsoup4>=4.12.3
+duckduckgo_search>=6.2.6
 requests>=2.32.0
