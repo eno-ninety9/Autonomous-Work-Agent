@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import glob
 import streamlit as st
 
 ROOT = os.path.abspath(os.path.dirname(__file__))
@@ -17,7 +18,6 @@ st.set_page_config(page_title="Cloud Manus", layout="wide")
 # Login
 # ------------------------
 APP_PASSWORD = os.getenv("APP_PASSWORD")
-
 if "auth" not in st.session_state:
     st.session_state.auth = False
 
@@ -67,24 +67,25 @@ with st.sidebar:
 agent = ManusAgent(config, memory=memory)
 
 st.title("🧠 Cloud Manus Agent")
-st.caption("Research v2 • Chat + Aktivität + Quellen + Report")
+st.caption("ChatGPT-Style Chat + Manus Research Inspector (Tasks/URLs/Preview/Files)")
 
-left, right = st.columns([0.38, 0.62], gap="large")
+# 3-column layout: left runs, middle chat, right inspector
+col_left, col_chat, col_inspector = st.columns([0.28, 0.44, 0.28], gap="large")
 
 # ------------------------
-# LEFT: Runs + Activity
+# LEFT: Runs + Activity timeline
 # ------------------------
-with left:
+with col_left:
     st.subheader("📜 Runs")
 
-    runs = memory.get_runs(limit=60)
+    runs = memory.get_runs(limit=80)
     run_ids = [r[0] for r in runs] if runs else []
 
     if "selected_run" not in st.session_state:
         st.session_state.selected_run = run_ids[0] if run_ids else None
 
-    col1, col2 = st.columns([0.7, 0.3])
-    with col1:
+    c1, c2 = st.columns([0.7, 0.3])
+    with c1:
         selected_run = st.selectbox(
             "Run auswählen",
             options=run_ids,
@@ -92,8 +93,7 @@ with left:
             format_func=lambda rid: f"Run #{rid}",
             disabled=(len(run_ids) == 0),
         ) if run_ids else None
-
-    with col2:
+    with c2:
         if st.button("➕ Neu"):
             new_id = memory.create_run("New chat")
             st.session_state.selected_run = new_id
@@ -106,30 +106,34 @@ with left:
     st.subheader("🔎 Aktivität")
 
     if st.session_state.selected_run:
-        events = memory.get_events(st.session_state.selected_run, limit=500)
-        for ts, kind, data in events[-140:]:
+        events = memory.get_events(st.session_state.selected_run, limit=800)
+        for ts, kind, data in events[-160:]:
             t = time.strftime("%H:%M:%S", time.localtime(ts))
-            if kind == "plan":
+            if kind == "phase":
+                st.write(f"**{t}** 🧭 Phase: `{data.get('value')}`")
+            elif kind == "plan":
                 st.write(f"**{t}** 🧩 Plan erstellt")
             elif kind == "tool_request":
-                st.write(f"**{t}** 🛠️ Tool: `{data.get('name','?')}`")
-            elif kind == "tool_result":
-                st.write(f"**{t}** ✅ Tool result: `{data.get('name','?')}`")
-            elif kind == "forced_final":
-                st.write(f"**{t}** 🧨 Forced final ({data.get('reason')})")
+                st.write(f"**{t}** 🛠️ Tool: `{data.get('name')}`")
+            elif kind == "visit":
+                st.write(f"**{t}** 🌐 Besuch: {data.get('url')}")
+            elif kind == "preview":
+                st.write(f"**{t}** 📄 Preview: {data.get('title','')[:60]}")
             elif kind == "final":
                 st.write(f"**{t}** 🎉 Final")
+            elif kind == "forced_final":
+                st.write(f"**{t}** 🧨 Forced final ({data.get('reason')})")
             elif kind == "model_text_fallback":
                 st.write(f"**{t}** ⚠️ Fallback (non-JSON)")
             else:
                 st.write(f"**{t}** {kind}")
     else:
-        st.info("Erstelle einen neuen Run (➕ Neu).")
+        st.info("Erstelle einen Run (➕ Neu).")
 
 # ------------------------
-# RIGHT: Chat
+# MIDDLE: Chat (ChatGPT-like)
 # ------------------------
-with right:
+with col_chat:
     st.subheader("💬 Chat")
 
     run_id = st.session_state.selected_run
@@ -137,47 +141,171 @@ with right:
         st.info("Bitte links einen Run auswählen oder auf ➕ Neu klicken.")
         st.stop()
 
-    # render chat history
-    raw_msgs = memory.get_messages(run_id, limit=300)
-    chat_history = []
-    for ts, role, content in raw_msgs:
-        chat_history.append({"role": role, "content": content})
+    raw_msgs = memory.get_messages(run_id, limit=400)
+    chat_history = [{"role": role, "content": content} for _, role, content in raw_msgs]
 
     for m in chat_history:
         with st.chat_message("user" if m["role"] == "user" else "assistant"):
             st.markdown(m["content"])
 
-    # chat input
     user_text = st.chat_input("Schreib eine Nachricht… (du kannst jederzeit nachfragen)")
     if user_text:
-        # save user message
         memory.add_message(run_id, "user", user_text)
-
-        # show immediately
         with st.chat_message("user"):
             st.markdown(user_text)
+
+        # Live inspector placeholders (right column will read from session_state)
+        st.session_state.live_phase = "START"
+        st.session_state.live_url = ""
+        st.session_state.live_preview_title = ""
+        st.session_state.live_preview_text = ""
+        st.session_state.live_tasks = {}
+        st.session_state.live_log = []
+
+        def progress_cb(evt):
+            # store latest info for inspector
+            kind = evt.get("type")
+            if kind == "phase":
+                st.session_state.live_phase = evt.get("value", "")
+            elif kind == "visit":
+                st.session_state.live_url = evt.get("url", "")
+            elif kind == "preview":
+                st.session_state.live_preview_title = evt.get("title", "")
+                st.session_state.live_preview_text = evt.get("text", "")
+            elif kind == "task_counts":
+                st.session_state.live_tasks = {
+                    "plan_steps": evt.get("plan_steps"),
+                    "search_tasks": evt.get("search_tasks"),
+                    "pages_visited": evt.get("pages_visited"),
+                    "extracts_made": evt.get("extracts_made"),
+                    "notes": evt.get("notes"),
+                }
+            # log line
+            line = f"{kind}: " + ", ".join([f"{k}={v}" for k, v in evt.items() if k not in ("type",)])
+            st.session_state.live_log.append(line)
+            st.session_state.live_log = st.session_state.live_log[-40:]  # keep last 40
 
         status = st.status("🧠 Agent arbeitet…", expanded=True)
         status.write("PLAN → SEARCH → READ → NOTES → REPORT")
 
         try:
-            # agent needs history INCLUDING new message (re-read from DB)
-            raw_msgs2 = memory.get_messages(run_id, limit=300)
+            raw_msgs2 = memory.get_messages(run_id, limit=400)
             hist2 = [{"role": r, "content": c} for _, r, c in raw_msgs2]
 
-            assistant_text = agent.run_chat(run_id=run_id, user_message=user_text, chat_history=hist2)
+            assistant_text = agent.run_chat(
+                run_id=run_id,
+                user_message=user_text,
+                chat_history=hist2,
+                progress_cb=progress_cb,
+            )
 
-            # save assistant message
             memory.add_message(run_id, "assistant", assistant_text)
-
-            # also store run final_answer as last assistant message for convenience
             memory.update_run_final(run_id, assistant_text)
 
             status.update(label="✅ Fertig", state="complete", expanded=False)
-
         except Exception as e:
             status.update(label="❌ Fehler", state="error", expanded=True)
             st.error(f"Agent Fehler: {e}")
             st.stop()
 
         st.rerun()
+
+# ------------------------
+# RIGHT: Manus Inspector (Live tasks, URLs, preview, files)
+# ------------------------
+with col_inspector:
+    st.subheader("🧪 Inspector")
+
+    tabs = st.tabs(["Live", "Tasks", "Sources", "Preview", "Files"])
+
+    run_id = st.session_state.selected_run
+
+    # Load events for sources/files
+    events = memory.get_events(run_id, limit=800) if run_id else []
+
+    # Collect sources + artifacts from latest final event
+    final_payload = None
+    for ts, kind, data in reversed(events):
+        if kind == "final":
+            final_payload = data
+            break
+
+    sources = (final_payload or {}).get("sources", []) if isinstance(final_payload, dict) else []
+    artifacts = (final_payload or {}).get("artifacts", []) if isinstance(final_payload, dict) else []
+
+    with tabs[0]:
+        phase = st.session_state.get("live_phase", "")
+        url = st.session_state.get("live_url", "")
+        st.markdown(f"**Phase:** `{phase}`" if phase else "**Phase:** _(idle)_")
+        if url:
+            st.markdown(f"**Aktuelle URL:** {url}")
+        log = st.session_state.get("live_log", [])
+        if log:
+            st.markdown("**Live Log**")
+            st.code("\n".join(log[-25:]))
+        else:
+            st.caption("Starte eine Nachricht, um Live-Events zu sehen.")
+
+    with tabs[1]:
+        t = st.session_state.get("live_tasks") or {}
+        if any(v is not None for v in t.values()):
+            st.metric("Plan Steps", t.get("plan_steps") or 0)
+            st.metric("Search Tasks", t.get("search_tasks") or 0)
+            st.metric("Pages visited", t.get("pages_visited") or 0)
+            st.metric("Extracts", t.get("extracts_made") or 0)
+            st.metric("Notes", t.get("notes") or 0)
+        elif final_payload and isinstance(final_payload, dict) and final_payload.get("tasks"):
+            ft = final_payload["tasks"]
+            st.metric("Plan Steps", ft.get("plan_steps", 0))
+            st.metric("Search Tasks", ft.get("search_tasks", 0))
+            st.metric("Pages visited", ft.get("pages_visited", 0))
+            st.metric("Extracts", ft.get("extracts_made", 0))
+            st.metric("Notes", ft.get("notes", 0))
+        else:
+            st.caption("Noch keine Task-Zähler vorhanden (starte eine Anfrage).")
+
+    with tabs[2]:
+        if sources:
+            for s in sources[:20]:
+                title = s.get("title", "Quelle")
+                url = s.get("url", "")
+                quality = s.get("quality", "unknown")
+                st.markdown(f"- **{title}** `({quality})`  \n  {url}")
+        else:
+            st.caption("Noch keine Quellen gespeichert (erst nach einer Recherche).")
+
+    with tabs[3]:
+        title = st.session_state.get("live_preview_title", "")
+        text = st.session_state.get("live_preview_text", "")
+        if title or text:
+            st.markdown(f"**Preview:** {title}")
+            st.text_area("Extrahierter Inhalt (Auszug)", value=text, height=260)
+        else:
+            st.caption("Preview erscheint, sobald der Agent eine Seite gelesen + extrahiert hat.")
+
+    with tabs[4]:
+        if artifacts:
+            st.markdown("**Artifacts**")
+            for a in artifacts:
+                path = a.get("path")
+                note = a.get("note", "")
+                st.markdown(f"- `{path}` — {note}")
+                if path and os.path.exists(path) and path.endswith(".md"):
+                    with st.expander(f"Öffnen: {os.path.basename(path)}"):
+                        try:
+                            content = open(path, "r", encoding="utf-8").read()
+                            st.text_area("Inhalt", value=content, height=260)
+                        except Exception as e:
+                            st.error(f"Konnte Datei nicht lesen: {e}")
+        else:
+            # show existing reports if any
+            if os.path.isdir(config.artifact_dir):
+                md_files = sorted(glob.glob(os.path.join(config.artifact_dir, "report_run_*.md")))[-10:]
+                if md_files:
+                    st.markdown("**Gefundene Reports**")
+                    for f in reversed(md_files):
+                        st.markdown(f"- `{f}`")
+                else:
+                    st.caption("Noch keine Reports gespeichert.")
+            else:
+                st.caption("Artifacts-Ordner existiert noch nicht.")
