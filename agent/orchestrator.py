@@ -33,6 +33,12 @@ class ManusAgent:
                 return json.loads(s[a:b+1])
             raise ValueError(f"Konnte JSON nicht parsen: {s[:200]}")
 
+    def _try_json(self, s: str):
+    try:
+        return self._safe_json(s)
+    except Exception:
+        return None
+
     def create_plan(self, goal: str):
         resp = self.client.chat.completions.create(
             model=self.config.model,
@@ -65,7 +71,18 @@ class ManusAgent:
                 messages=messages,
             )
             txt = resp.choices[0].message.content
-            obj = self._safe_json(txt)
+            obj = self._try_json(txt)
+
+            # FALLBACK: Wenn das Model kein JSON liefert, gib den Text trotzdem aus
+            if obj is None:
+                if self.memory and run_id:
+                    self.memory.add_event(run_id, "model_text_fallback", {"text": txt[:2000]})
+                return {
+                    "plan": plan,
+                    "result": txt,
+                    "sources": sources,
+                    "assumptions": ["Model returned non-JSON; fallback used."],
+                }
 
             if obj.get("action") == "tool":
                 name = obj.get("name")
@@ -133,3 +150,4 @@ class ManusAgent:
             "sources": sources,
             "assumptions": ["max_loops erreicht"],
         }
+
